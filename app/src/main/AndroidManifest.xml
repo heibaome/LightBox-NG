@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Declare the bridge permission at signature protection level. The
+         helper requires the same permission name with the same protection
+         level in its own manifest; Android enforces matching on install. -->
+    <permission
+        android:name="com.lightbox.ng.permission.HELPER_BRIDGE"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="com.lightbox.ng.permission.HELPER_BRIDGE" />
+
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!-- Needed on Android 11+ so we can prompt to install the bundled
+         helper APK via the system package installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Queries block lets main see the helper package on Android 11+
+         (strict package visibility). Without this, isInstalled() returns
+         false even when the helper is installed. -->
+    <queries>
+        <package android:name="com.lightbox.ng.arm32" />
+        <intent>
+            <action android:name="com.lightbox.ng.arm32.action.LAUNCH" />
+        </intent>
+        <provider android:authorities="com.lightbox.ng.arm32.installed_games" />
+    </queries>
+
+    <application
+        android:name=".LightBoxApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.LightBox"
+        android:enableOnBackInvokedCallback="true"
+        android:requestLegacyExternalStorage="true"
+        tools:targetApi="n">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/vnd.android.package-archive" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.xapk" />
+                <data android:pathPattern=".*\\.apks" />
+                <data android:pathPattern=".*\\.apkm" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.xapk" />
+                <data android:pathPattern=".*\\.apks" />
+                <data android:pathPattern=".*\\.apkm" />
+            </intent-filter>
+        </activity>
+
+        <!-- FileProvider used by HelperInstaller to hand the bundled
+             helper APK to the system package installer. Scoped to a
+             single subdirectory of the cache (see xml/helper_file_paths). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.helper_fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/helper_file_paths" />
+        </provider>
+    </application>
+</manifest>

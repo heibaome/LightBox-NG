@@ -1,0 +1,226 @@
+name: LightBox-NG Build
+
+on:
+  push:
+    branches: [ main, master, 'feature/**', 'fix/**', 'rebuild/**' ]
+    tags:     [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
+
+jobs:
+  # ── Safety net: refuse to build any diff that touches GG-critical code ──
+  # The engine's GameGuardian support sits on exact behavior of RuntimeHook,
+  # FileSystemHook, forkAndExec interception, the virtual proc/auxv layer,
+  # and the daemon patch logic. v1.0.15 broke because someone edited these
+  # paths. This job makes the CI fail before wasting compute on anything
+  # that touches them.
+  gg-guard:
+    name: GameGuardian engine-surface guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check forbidden path changes in last commit
+        run: |
+          set -euo pipefail
+          # For PR events, compare against base; for push, compare to parent.
+          BASE=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+          if [ -z "$BASE" ]; then
+            echo "No parent commit (initial commit); skipping guard."
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE" HEAD || true)
+          echo "Changed files:"
+          echo "$CHANGED"
+          FORBIDDEN_PATTERNS=(
+            '^Bcore/src/main/cpp/Hook/RuntimeHook\.(cpp|h)$'
+            '^Bcore/src/main/cpp/Hook/FileSystemHook\.(cpp|h)$'
+            '^Bcore/src/main/cpp/Hook/UnixFileSystemHook\.(cpp|h)$'
+            'GGDaemon.*\.(java|cpp|h)$'
+            'createVirtualAuxv'
+            'forkAndExec'
+          )
+          fail=0
+          for pat in "${FORBIDDEN_PATTERNS[@]}"; do
+            if echo "$CHANGED" | grep -E "$pat" >/dev/null 2>&1; then
+              echo "FORBIDDEN: diff touches $pat"
+              echo "   (to change GG-critical code, remove the guard manually AFTER verifying on-device)"
+              fail=1
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            exit 1
+          fi
+          echo "OK: no forbidden paths changed."
+
+  build:
+    name: Build :app (arm64) + :helper32 (arm32) and bundle
+    needs: [ gg-guard ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: 'r27d'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # ── Step 1: build the helper FIRST, then copy the debug APK into
+      #    main's assets/ so main can offer to install it via the bundled
+      #    HelperInstaller. Doing this before building :app is important. ──
+      - name: Build :helper32 (armeabi-v7a)
+        run: ./gradlew :helper32:assembleDebug :helper32:assembleRelease --stacktrace --no-daemon
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Bundle helper APK into main's assets
+        run: |
+          set -euo pipefail
+          DEBUG_APK=$(ls helper32/build/outputs/apk/debug/*.apk | head -1)
+          mkdir -p app/src/main/assets
+          cp "$DEBUG_APK" app/src/main/assets/helper32.apk
+          ls -la app/src/main/assets/
+
+      - name: Build :app (arm64-v8a primary)
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --stacktrace --no-daemon
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+
+      - name: Collect all APKs
+        id: collect
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          find app/build/outputs/apk helper32/build/outputs/apk -type f -name "*.apk" -print -exec cp {} release-artifacts/ \;
+          echo "--- Collected ---"
+          ls -la release-artifacts/
+
+      - name: Verify APK ABIs
+        run: |
+          set -euo pipefail
+          for apk in release-artifacts/*.apk; do
+            echo "--- $apk ---"
+            unzip -l "$apk" | awk '/lib\//{print $NF}' | sed 's|lib/||;s|/.*||' | sort -u
+          done
+
+      - name: Verify signature parity (main ↔ helper)
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          APKSIGNER="$BT/apksigner"
+          MAIN=$(ls release-artifacts/*universal*debug*.apk 2>/dev/null | head -1 || ls release-artifacts/LightBox-NG-1.0.0-universal-debug.apk 2>/dev/null | head -1)
+          if [ -z "$MAIN" ]; then
+            MAIN=$(ls release-artifacts/LightBox-NG*debug.apk 2>/dev/null | grep -v helper32 | head -1 || true)
+          fi
+          HELPER=$(ls release-artifacts/LightBox-NG-helper32*debug*.apk 2>/dev/null | head -1)
+          if [ -z "$MAIN" ] || [ -z "$HELPER" ]; then
+            echo "Couldn't find both debug APKs for signature check:"
+            echo "  MAIN=$MAIN"
+            echo "  HELPER=$HELPER"
+            exit 1
+          fi
+          echo "main:   $MAIN"
+          echo "helper: $HELPER"
+          cert_sha() {
+            "$APKSIGNER" verify --print-certs-pem "$1" 2>&1 \
+              | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
+              | openssl x509 -outform DER 2>/dev/null \
+              | sha256sum | awk '{print $1}'
+          }
+          M=$(cert_sha "$MAIN")
+          H=$(cert_sha "$HELPER")
+          echo "main   cert sha: ${M:-<empty>}"
+          echo "helper cert sha: ${H:-<empty>}"
+          if [ -z "$M" ] || [ -z "$H" ] || [ "$M" != "$H" ]; then
+            echo "FATAL: main and helper signers differ — signature-level permissions will not resolve"
+            exit 1
+          fi
+          echo "OK: main and helper signed by same key."
+
+      - name: Verify applicationIds differ
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          AAPT2="$BT/aapt2"
+          pkg_of() { "$AAPT2" dump badging "$1" 2>/dev/null | awk -F"'" '/^package:/{print $2}'; }
+          MAIN=$(ls release-artifacts/LightBox-NG*debug.apk 2>/dev/null | grep -v helper32 | head -1)
+          HELPER=$(ls release-artifacts/LightBox-NG-helper32*debug.apk 2>/dev/null | head -1)
+          PM=$(pkg_of "$MAIN"); PH=$(pkg_of "$HELPER")
+          echo "main applicationId:   $PM"
+          echo "helper applicationId: $PH"
+          [ "$PM" = "com.lightbox.ng" ] || { echo "FATAL: main app id wrong"; exit 1; }
+          [ "$PH" = "com.lightbox.ng.arm32" ] || { echo "FATAL: helper app id wrong"; exit 1; }
+          [ "$PM" != "$PH" ] || { echo "FATAL: app ids identical"; exit 1; }
+          echo "OK."
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightBox-NG-APKs
+          path: release-artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Compute release tag
+        id: tag
+        if: github.event_name == 'push'
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            echo "pre=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=build-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "pre=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: LightBox-NG ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ steps.tag.outputs.pre }}
+          fail_on_unmatched_files: true
+          files: |
+            release-artifacts/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
