@@ -32,7 +32,20 @@ public class IConnectivityManagerProxy extends BinderInvocationStub {
 
     @Override
     protected Object getWho() {
-        return BRIConnectivityManagerStub.get().asInterface(BRServiceManager.get().getService(Context.CONNECTIVITY_SERVICE));
+        IBinder service = BRServiceManager.get().getService(Context.CONNECTIVITY_SERVICE);
+        Slog.d(TAG, "getWho() — service binder: " + (service != null ? service.getClass().getName() : "NULL"));
+        if (service == null) {
+            Slog.e(TAG, "FATAL: Connectivity service binder is NULL — network proxy disabled!");
+            return null;
+        }
+        try {
+            Object who = BRIConnectivityManagerStub.get().asInterface(service);
+            Slog.d(TAG, "getWho() — asInterface returned: " + (who != null ? who.getClass().getName() : "NULL"));
+            return who;
+        } catch (Exception e) {
+            Slog.e(TAG, "FATAL: asInterface() crashed — network proxy disabled! " + e.getMessage(), e);
+            return null;
+        }
     }
 
     @Override

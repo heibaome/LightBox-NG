@@ -12,6 +12,12 @@
 
     <uses-permission android:name="com.lightbox.ng.permission.HELPER_BRIDGE" />
 
+    <!-- Network permissions: the virtualised apps need these to function.
+         Declared explicitly in each APK manifest (not just via Bcore merge). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -28,6 +34,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.LightBox"
+        android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true"
         android:requestLegacyExternalStorage="true"
         tools:targetApi="n">
