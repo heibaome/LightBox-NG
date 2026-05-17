@@ -389,7 +389,27 @@ public class BActivityThread extends IBActivityThread.Stub {
             }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            WebView.setDataDirectorySuffix(getUserId() + ":" + packageName + ":" + processName);
+            String suffix = getUserId() + ":" + packageName + ":" + processName;
+            WebView.setDataDirectorySuffix(suffix);
+            // Create the WebView data directory for this specific suffix.
+            // Without this, Chromium gets ERR_CACHE_MISS because the
+            // directory was never created (SocialMediaAppCrashPrevention
+            // creates a GLOBAL directory with a different suffix format).
+            try {
+                Context hostCtx = BlackBoxCore.getContext();
+                if (hostCtx != null) {
+                    String webViewDir = hostCtx.getApplicationInfo().dataDir + "/webview_" + suffix;
+                    File dir = new File(webViewDir);
+                    if (!dir.exists()) {
+                        dir.mkdirs();
+                        new File(dir, "cache").mkdirs();
+                        new File(dir, "cookies").mkdirs();
+                        Slog.d(TAG, "Created WebView data dir for " + packageName + ": " + webViewDir);
+                    }
+                }
+            } catch (Exception e) {
+                Slog.w(TAG, "Failed to create WebView data dir: " + e.getMessage());
+            }
         }
 
         VirtualRuntime.setupRuntime(processName, applicationInfo);
