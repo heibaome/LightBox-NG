@@ -10,6 +10,9 @@ import top.niunaijun.blackbox.utils.Slog;
 
 public class DeviceIdProxy extends ClassInvocationStub {
     public static final String TAG = "DeviceIdProxy";
+    
+    private static String sMockDeviceId = null;
+    private static String sMockImei = null;
 
     public DeviceIdProxy() {
         super();
@@ -31,20 +34,75 @@ public class DeviceIdProxy extends ClassInvocationStub {
     }
 
     
+    private static String getStableDeviceId() {
+        if (sMockDeviceId == null) {
+            try {
+                String packageName = top.niunaijun.blackbox.app.BActivityThread.getAppPackageName();
+                int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                String source = top.niunaijun.blackbox.BlackBoxCore.getHostPkg() + "_device_" + userId + "_" + packageName;
+                String md5 = top.niunaijun.blackbox.utils.Md5Utils.md5(source);
+                // 生成有效的15位IMEI格式
+                sMockDeviceId = generateValidImei(md5);
+            } catch (Exception e) {
+                Slog.w(TAG, "DeviceId: Failed to generate stable ID, using fallback", e);
+                sMockDeviceId = "352315053488619";
+            }
+            Slog.d(TAG, "DeviceId: Generated stable device ID: " + sMockDeviceId);
+        }
+        return sMockDeviceId;
+    }
+    
+    private static String generateValidImei(String md5) {
+        StringBuilder imei = new StringBuilder();
+        // 取前14位作为IMEI的前14位
+        for (int i = 0; i < 14 && i < md5.length(); i++) {
+            char c = md5.charAt(i);
+            if (Character.isDigit(c)) {
+                imei.append(c);
+            } else {
+                // 将字母转为数字
+                imei.append((c % 10));
+            }
+        }
+        // 补全到14位
+        while (imei.length() < 14) {
+            imei.append('0');
+        }
+        // 计算Luhn算法校验位
+        imei.append(computeLuhnCheckDigit(imei.toString()));
+        return imei.toString();
+    }
+    
+    private static char computeLuhnCheckDigit(String number) {
+        int sum = 0;
+        for (int i = number.length() - 1; i >= 0; i--) {
+            int digit = number.charAt(i) - '0';
+            if ((number.length() - i) % 2 == 0) {
+                digit *= 2;
+                if (digit > 9) {
+                    digit -= 9;
+                }
+            }
+            sum += digit;
+        }
+        int checkDigit = (10 - (sum % 10)) % 10;
+        return (char) ('0' + checkDigit);
+    }
+    
     @ProxyMethod("getDeviceId")
     public static class GetDeviceId extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
-                if (who == null) {
-                    Slog.w(TAG, "GetDeviceId called on null object, returning default device ID");
-                    return "default_device_id";
+                Object result = method.invoke(who, args);
+                if (result != null && !"0".equals(result.toString()) && !"".equals(result.toString())) {
+                    return result;
                 }
-                return method.invoke(who, args);
             } catch (Exception e) {
-                Slog.w(TAG, "GetDeviceId error, returning default device ID: " + e.getMessage());
-                return "default_device_id";
+                Slog.w(TAG, "GetDeviceId: Original method failed", e);
             }
+            Slog.d(TAG, "GetDeviceId: Returning stable device ID");
+            return getStableDeviceId();
         }
     }
 
@@ -89,12 +147,8 @@ public class DeviceIdProxy extends ClassInvocationStub {
     public static class GenerateDeviceId extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            try {
-                return method.invoke(who, args);
-            } catch (Exception e) {
-                Slog.w(TAG, "GenerateDeviceId error, returning default device ID: " + e.getMessage());
-                return "generated_device_id_" + System.currentTimeMillis();
-            }
+            Slog.d(TAG, "GenerateDeviceId: Returning stable device ID");
+            return getStableDeviceId();
         }
     }
 
@@ -121,16 +175,8 @@ public class DeviceIdProxy extends ClassInvocationStub {
     public static class RetrieveDeviceId extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            try {
-                if (who == null) {
-                    Slog.w(TAG, "RetrieveDeviceId called on null object, returning default device ID");
-                    return "retrieved_device_id";
-                }
-                return method.invoke(who, args);
-            } catch (Exception e) {
-                Slog.w(TAG, "RetrieveDeviceId error, returning default device ID: " + e.getMessage());
-                return "retrieved_device_id";
-            }
+            Slog.d(TAG, "RetrieveDeviceId: Returning stable device ID");
+            return getStableDeviceId();
         }
     }
 }
