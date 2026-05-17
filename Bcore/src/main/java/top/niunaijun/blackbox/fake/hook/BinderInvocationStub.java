@@ -8,6 +8,8 @@ import android.os.RemoteException;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import top.niunaijun.blackbox.utils.Slog;
+
 import java.io.FileDescriptor;
 import java.util.Map;
 
@@ -74,7 +76,25 @@ public abstract class BinderInvocationStub extends ClassInvocationStub implement
 
 
     protected void replaceSystemService(String name) {
-        Map<String, IBinder> services = BRServiceManager.get().sCache();
-        services.put(name, this);
+        try {
+            Map<String, IBinder> services = BRServiceManager.get().sCache();
+            if (services != null) {
+                services.put(name, this);
+                Slog.d("BinderInvocationStub", "replaceSystemService: " + name + " OK (sCache)");
+                return;
+            }
+        } catch (Throwable t) {
+            Slog.w("BinderInvocationStub", "replaceSystemService sCache failed: " + t.getMessage());
+        }
+        
+        // Fallback for Android 14+ where sCache may be inaccessible.
+        // Try addService as a direct registration path.
+        try {
+            BRServiceManager.get().addService(name, this);
+            Slog.d("BinderInvocationStub", "replaceSystemService: " + name + " OK (addService fallback)");
+        } catch (Throwable t) {
+            Slog.e("BinderInvocationStub", "replaceSystemService: " + name + " FAILED — " + t.getMessage() +
+                   " — network hooks will NOT intercept system service calls!");
+        }
     }
 }
