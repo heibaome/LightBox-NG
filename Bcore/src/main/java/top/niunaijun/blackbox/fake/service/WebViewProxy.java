@@ -46,7 +46,7 @@ public class WebViewProxy extends ClassInvocationStub {
     public static class Constructor extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            Slog.d(TAG, "WebView: Constructor called, intercepting to prevent data directory conflicts");
+            Slog.d(TAG, "WebView: Constructor called");
             Context context = null;
             try {
                 if (args != null && args.length > 0 && args[0] instanceof Context) {
@@ -55,40 +55,30 @@ public class WebViewProxy extends ClassInvocationStub {
                     context = BlackBoxCore.getContext();
                 }
 
+                // Ensure WebView data directory exists using the default app_webview/ path
+                // This matches the setup in BActivityThread.handleBindApplication()
                 if (context != null) {
-                    
-                    String packageName = context.getPackageName();
-                    String userId = String.valueOf(BActivityThread.getUserId());
-                    String uniqueDataDir = context.getApplicationInfo().dataDir + "/webview_" + userId + "_" + android.os.Process.myPid();
-
-                    
-                    File dataDir = new File(uniqueDataDir);
+                    String webViewDir = context.getApplicationInfo().dataDir + "/app_webview";
+                    File dataDir = new File(webViewDir);
                     if (!dataDir.exists()) {
                         dataDir.mkdirs();
-                        Slog.d(TAG, "WebView: Created unique data directory: " + uniqueDataDir);
+                        new File(dataDir, "cache").mkdirs();
+                        new File(dataDir, "cookies").mkdirs();
+                        Slog.d(TAG, "WebView: Created app_webview directory: " + webViewDir);
                     }
-
-                    
-                    System.setProperty("webview.data.dir", uniqueDataDir);
-                    System.setProperty("webview.cache.dir", uniqueDataDir + "/cache");
-                    System.setProperty("webview.cookies.dir", uniqueDataDir + "/cookies");
-
-                    Slog.d(TAG, "WebView: Set custom data directory: " + uniqueDataDir);
                 }
 
-                
+                // Call original constructor
                 Object result = method.invoke(who, args);
 
                 if (result instanceof WebView) {
                     WebView webView = (WebView) result;
-                    
                     configureWebView(webView);
                 }
 
                 return result;
             } catch (Exception e) {
                 Slog.w(TAG, "WebView: Constructor failed, attempting fallback", e);
-                
                 return createFallbackWebView(context);
             }
         }
@@ -234,21 +224,20 @@ public class WebViewProxy extends ClassInvocationStub {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             Slog.d(TAG, "WebView: getInstance called for WebViewDatabase");
-            
             try {
-                
+                // Ensure WebView data directory exists using the default app_webview/ path
                 Context context = BlackBoxCore.getContext();
                 if (context != null) {
-                    
-                    String packageName = context.getPackageName();
-                    String userId = String.valueOf(BActivityThread.getUserId());
-                    String uniqueDbPath = context.getApplicationInfo().dataDir + "/webview_db_" + userId + "_" + android.os.Process.myPid();
-                    
-                    
-                    System.setProperty("webview.database.path", uniqueDbPath);
-                    Slog.d(TAG, "WebView: Set unique database path: " + uniqueDbPath);
+                    String webViewDir = context.getApplicationInfo().dataDir + "/app_webview";
+                    File dataDir = new File(webViewDir);
+                    if (!dataDir.exists()) {
+                        dataDir.mkdirs();
+                        new File(dataDir, "cache").mkdirs();
+                        new File(dataDir, "cookies").mkdirs();
+                    }
+                    System.setProperty("webview.database.path", webViewDir);
+                    Slog.d(TAG, "WebView: Set database path: " + webViewDir);
                 }
-                
                 return method.invoke(who, args);
             } catch (Exception e) {
                 Slog.w(TAG, "WebView: Failed to get WebViewDatabase instance", e);
