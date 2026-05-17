@@ -132,46 +132,20 @@ public class SocialMediaAppCrashPrevention {
     
     private static void hookWebViewDatabase() {
         try {
-            
             Context context = BlackBoxCore.getContext();
             if (context != null) {
-                String userId = String.valueOf(BActivityThread.getUserId());
-                
-                // API 28+: WebView.setDataDirectorySuffix is the official way.
-                // The suffix determines the WebView data path:
-                //   <appDataDir>/webview_<suffix>/
-                // Must be called before any WebView is created.
-                String suffix = "virtual_" + userId;
-                String webViewDir = null;
-                
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    try {
-                        WebView.setDataDirectorySuffix(suffix);
-                        Slog.d(TAG, "WebView data directory suffix set: " + suffix);
-                        // Chromium will now use: <dataDir>/webview_virtual_<userId>/
-                        webViewDir = context.getApplicationInfo().dataDir + "/webview_" + suffix;
-                    } catch (IllegalStateException alreadySet) {
-                        Slog.d(TAG, "WebView data directory suffix already set, using same path");
-                        webViewDir = context.getApplicationInfo().dataDir + "/webview_" + suffix;
-                    } catch (Exception e) {
-                        Slog.w(TAG, "Could not set WebView data directory suffix: " + e.getMessage());
-                        // Fallback: use userId-based path (no suffix prefix)
-                        webViewDir = context.getApplicationInfo().dataDir + "/webview_" + userId;
-                    }
-                } else {
-                    // Pre-API-28: rely on system properties
-                    webViewDir = context.getApplicationInfo().dataDir + "/webview_" + userId;
-                }
-                
-                // Create the data directory and required subdirectories.
-                // Chromium WebView needs cache/ for disk cache and cookies/
-                // for cookie storage. Without these, ERR_CACHE_MISS occurs.
+                // Use the default WebView data directory: <dataDir>/app_webview/
+                // Do NOT call WebView.setDataDirectorySuffix() — it's a
+                // process-wide setting that conflicts across virtual apps.
+                String dataDir = context.getApplicationInfo().dataDir;
+                String webViewDir = dataDir + "/app_webview";
+
                 File webViewDirectory = new File(webViewDir);
                 if (!webViewDirectory.exists()) {
                     webViewDirectory.mkdirs();
-                    Slog.d(TAG, "Created WebView directory: " + webViewDir);
+                    Slog.d(TAG, "Created default WebView directory: " + webViewDir);
                 }
-                
+
                 File cacheDir = new File(webViewDir, "cache");
                 if (!cacheDir.exists()) {
                     cacheDir.mkdirs();
@@ -182,11 +156,6 @@ public class SocialMediaAppCrashPrevention {
                     cookiesDir.mkdirs();
                     Slog.d(TAG, "Created WebView cookies directory: " + cookiesDir.getAbsolutePath());
                 }
-                
-                // Set system properties as backup (effective on older Android versions)
-                System.setProperty("webview.data.dir", webViewDir);
-                System.setProperty("webview.cache.dir", webViewDir + "/cache");
-                System.setProperty("webview.cookies.dir", webViewDir + "/cookies");
             }
         } catch (Exception e) {
             Slog.w(TAG, "Could not hook WebViewDatabase: " + e.getMessage());

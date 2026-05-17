@@ -190,25 +190,14 @@ public class WebViewProxy extends ClassInvocationStub {
     public static class SetDataDirectorySuffix extends MethodHook {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
-            try {
-                if (args != null && args.length > 0) {
-                    String suffix = (String) args[0];
-                    Slog.d(TAG, "WebView: setDataDirectorySuffix called with: " + suffix);
-                    
-                    
-                    Context context = BlackBoxCore.getContext();
-                    String packageName = context != null ? context.getPackageName() : "unknown";
-                    String userId = String.valueOf(BActivityThread.getUserId());
-                    String uniqueSuffix = suffix + "_" + userId + "_" + android.os.Process.myPid();
-                    args[0] = uniqueSuffix;
-                    Slog.d(TAG, "WebView: Using unique suffix: " + uniqueSuffix);
-                }
-                
-                return method.invoke(who, args);
-            } catch (Exception e) {
-                Slog.w(TAG, "WebView: setDataDirectorySuffix failed, continuing without suffix", e);
-                return null; 
+            if (args != null && args.length > 0) {
+                Slog.d(TAG, "WebView: BLOCKED setDataDirectorySuffix(\"" + args[0]
+                    + "\") — suffix is process-wide and would conflict across virtual apps");
             }
+            // Silently swallow: we use the default app_webview/ directory.
+            // setDataDirectorySuffix() is process-wide, can only be called once,
+            // and would break isolation between virtual apps and the host.
+            return null;
         }
     }
 
@@ -218,30 +207,23 @@ public class WebViewProxy extends ClassInvocationStub {
         @Override
         protected Object hook(Object who, Method method, Object[] args) throws Throwable {
             try {
-                Slog.d(TAG, "WebView: getDataDirectory called, returning unique directory");
-                
-                
-                Context context = BlackBoxCore.getContext();
-                if (context != null) {
-                    String packageName = context.getPackageName();
-                    String userId = String.valueOf(BActivityThread.getUserId());
-                    String uniqueDir = context.getApplicationInfo().dataDir + "/webview_" + userId + "_" + android.os.Process.myPid();
-                    
-                    
-                    File dir = new File(uniqueDir);
+                // Let the original method return whatever path Chromium decides.
+                // In virtual app processes, ApplicationInfo.dataDir is redirected
+                // by BEnvironment/PackageManagerCompat, so this returns the correct
+                // per-virtual-app path automatically.
+                Object result = method.invoke(who, args);
+                // Ensure that path exists so Chromium doesn't get ERR_CACHE_MISS.
+                if (result != null) {
+                    File dir = new File(result.toString());
                     if (!dir.exists()) {
                         dir.mkdirs();
+                        Slog.d(TAG, "WebView: Created default data dir: " + result);
                     }
-                    
-                    Slog.d(TAG, "WebView: Returning unique data directory: " + uniqueDir);
-                    return uniqueDir;
                 }
-                
-                return method.invoke(who, args);
+                return result;
             } catch (Exception e) {
-                Slog.w(TAG, "WebView: getDataDirectory failed, returning fallback", e);
-                
-                return "/data/data/" + BlackBoxCore.getHostPkg() + "/webview_fallback";
+                Slog.w(TAG, "WebView: getDataDirectory failed", e);
+                return method.invoke(who, args);
             }
         }
     }

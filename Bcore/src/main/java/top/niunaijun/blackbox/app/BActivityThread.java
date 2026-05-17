@@ -30,7 +30,7 @@ import android.os.RemoteException;
 import android.os.StrictMode;
 import android.text.TextUtils;
 import android.util.Log;
-import android.webkit.WebView;
+
 
 import java.io.File;
 import java.lang.reflect.Method;
@@ -66,6 +66,7 @@ import top.niunaijun.blackbox.core.CrashHandler;
 import top.niunaijun.blackbox.core.IBActivityThread;
 import top.niunaijun.blackbox.core.IOCore;
 import top.niunaijun.blackbox.core.NativeCore;
+import top.niunaijun.blackbox.core.env.BEnvironment;
 import top.niunaijun.blackbox.core.env.VirtualRuntime;
 import top.niunaijun.blackbox.core.system.user.BUserHandle;
 import top.niunaijun.blackbox.entity.AppConfig;
@@ -388,28 +389,25 @@ public class BActivityThread extends IBActivityThread.Stub {
                 StrictModeCompat.disableDeathOnFileUriExposure();
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            String suffix = getUserId() + ":" + packageName + ":" + processName;
-            WebView.setDataDirectorySuffix(suffix);
-            // Create the WebView data directory for this specific suffix.
-            // Without this, Chromium gets ERR_CACHE_MISS because the
-            // directory was never created (SocialMediaAppCrashPrevention
-            // creates a GLOBAL directory with a different suffix format).
-            try {
-                Context hostCtx = BlackBoxCore.getContext();
-                if (hostCtx != null) {
-                    String webViewDir = hostCtx.getApplicationInfo().dataDir + "/webview_" + suffix;
-                    File dir = new File(webViewDir);
-                    if (!dir.exists()) {
-                        dir.mkdirs();
-                        new File(dir, "cache").mkdirs();
-                        new File(dir, "cookies").mkdirs();
-                        Slog.d(TAG, "Created WebView data dir for " + packageName + ": " + webViewDir);
-                    }
-                }
-            } catch (Exception e) {
-                Slog.w(TAG, "Failed to create WebView data dir: " + e.getMessage());
+        // Ensure default WebView data directory exists under the VIRTUAL app's
+        // data dir (redirected by BEnvironment), NOT the host's data dir.
+        // We deliberately do NOT call WebView.setDataDirectorySuffix()
+        // because it sets a process-wide flag that can only be called once,
+        // causing conflicts between virtual apps and the host process.
+        // Instead, Chromium uses the default <dataDir>/app_webview/ path.
+        // Each virtual app runs in its own process with BEnvironment-redirected
+        // dataDir, so their WebView data is naturally isolated.
+        try {
+            File dataDir = BEnvironment.getDataDir(packageName, getUserId());
+            File webViewDir = new File(dataDir, "app_webview");
+            if (!webViewDir.exists()) {
+                webViewDir.mkdirs();
+                new File(webViewDir, "cache").mkdirs();
+                new File(webViewDir, "cookies").mkdirs();
+                Slog.d(TAG, "Created default WebView data dir: " + webViewDir);
             }
+        } catch (Exception e) {
+            Slog.w(TAG, "Failed to create WebView data dir: " + e.getMessage());
         }
 
         VirtualRuntime.setupRuntime(processName, applicationInfo);
