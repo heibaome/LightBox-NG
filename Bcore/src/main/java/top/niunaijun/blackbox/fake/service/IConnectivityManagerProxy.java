@@ -5,6 +5,7 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Network;
 import android.net.LinkProperties;
+import android.os.IBinder;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Constructor;
