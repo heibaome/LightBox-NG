@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import top.niunaijun.blackbox.utils.MethodParameterUtils;
+import top.niunaijun.blackbox.utils.Slog;
 
 
 public abstract class ClassInvocationStub implements InvocationHandler, IInjectHook {
@@ -43,17 +44,39 @@ public abstract class ClassInvocationStub implements InvocationHandler, IInjectH
     @Override
     public void injectHook() {
         mBase = getWho();
+        String tag = this.getClass().getSimpleName();
         
         if (mBase == null) {
+            Slog.e(TAG, tag + ".getWho() returned NULL — proxy DISABLED");
             return;
         }
-        mProxyInvocation = Proxy.newProxyInstance(mBase.getClass().getClassLoader(), MethodParameterUtils.getAllInterface(mBase.getClass()), this);
+        Slog.d(TAG, tag + ".getWho() OK → " + mBase.getClass().getName());
+        
+        try {
+            mProxyInvocation = Proxy.newProxyInstance(
+                mBase.getClass().getClassLoader(),
+                MethodParameterUtils.getAllInterface(mBase.getClass()),
+                this);
+            Slog.d(TAG, tag + " proxy created OK");
+        } catch (Exception e) {
+            Slog.e(TAG, tag + " proxy creation FAILED: " + e.getMessage(), e);
+            return;
+        }
+        
         if (!onlyProxy) {
-            inject(mBase, mProxyInvocation);
+            try {
+                inject(mBase, mProxyInvocation);
+                Slog.d(TAG, tag + " inject() OK");
+            } catch (Exception e) {
+                Slog.e(TAG, tag + " inject() FAILED: " + e.getMessage(), e);
+                // Don't return — method hooks are still useful even without
+                // service cache injection
+            }
         }
 
         onBindMethod();
         Class<?>[] declaredClasses = this.getClass().getDeclaredClasses();
+        int hookCount = 0;
         for (Class<?> declaredClass : declaredClasses) {
             initAnnotation(declaredClass);
         }
@@ -65,6 +88,8 @@ public abstract class ClassInvocationStub implements InvocationHandler, IInjectH
                 }
             }
         }
+        hookCount = mMethodHookMap.size();
+        Slog.d(TAG, tag + " registered " + hookCount + " method hooks");
     }
 
     protected void initAnnotation(Class<?> clazz) {
