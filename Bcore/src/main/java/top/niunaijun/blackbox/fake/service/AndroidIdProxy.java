@@ -10,6 +10,8 @@ import top.niunaijun.blackbox.utils.Slog;
 
 public class AndroidIdProxy extends ClassInvocationStub {
     public static final String TAG = "AndroidIdProxy";
+    
+    private static String sMockAndroidId = null;
 
     public AndroidIdProxy() {
         super();
@@ -158,20 +160,26 @@ public class AndroidIdProxy extends ClassInvocationStub {
 
     
     private static String generateMockAndroidId() {
-        
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 16; i++) {
-            sb.append(Integer.toHexString((int) (Math.random() * 16)));
+        if (sMockAndroidId == null) {
+            try {
+                // 基于包名和userId生成稳定的Android ID
+                String packageName = top.niunaijun.blackbox.app.BActivityThread.getAppPackageName();
+                int userId = top.niunaijun.blackbox.app.BActivityThread.getUserId();
+                String source = top.niunaijun.blackbox.BlackBoxCore.getHostPkg() + "_" + userId + "_" + packageName;
+                sMockAndroidId = top.niunaijun.blackbox.utils.Md5Utils.md5(source).substring(0, 16).toLowerCase();
+            } catch (Exception e) {
+                Slog.w(TAG, "AndroidId: Failed to generate stable ID, using fallback", e);
+                sMockAndroidId = "0123456789abcdef";
+            }
+            Slog.d(TAG, "AndroidId: Generated stable Android ID: " + sMockAndroidId);
         }
-        String mockId = sb.toString().toUpperCase();
-        Slog.d(TAG, "AndroidId: Generated mock Android ID: " + mockId);
-        return mockId;
+        return sMockAndroidId;
     }
 
     private static Long generateMockAndroidIdLong() {
-        
-        long mockId = (long) (Math.random() * Long.MAX_VALUE);
-        Slog.d(TAG, "AndroidId: Generated mock Android ID long: " + mockId);
+        String id = generateMockAndroidId();
+        long mockId = Long.parseLong(id.substring(0, 15), 16);
+        Slog.d(TAG, "AndroidId: Generated stable Android ID long: " + mockId);
         return mockId;
     }
 }

@@ -139,26 +139,107 @@ public class SocialMediaAppCrashPrevention {
                 // process-wide setting that conflicts across virtual apps.
                 String dataDir = context.getApplicationInfo().dataDir;
                 String webViewDir = dataDir + "/app_webview";
-
-                File webViewDirectory = new File(webViewDir);
-                if (!webViewDirectory.exists()) {
-                    webViewDirectory.mkdirs();
-                    Slog.d(TAG, "Created default WebView directory: " + webViewDir);
-                }
-
-                File cacheDir = new File(webViewDir, "cache");
-                if (!cacheDir.exists()) {
-                    cacheDir.mkdirs();
-                    Slog.d(TAG, "Created WebView cache directory: " + cacheDir.getAbsolutePath());
-                }
-                File cookiesDir = new File(webViewDir, "cookies");
-                if (!cookiesDir.exists()) {
-                    cookiesDir.mkdirs();
-                    Slog.d(TAG, "Created WebView cookies directory: " + cookiesDir.getAbsolutePath());
-                }
+                
+                // Create the data directory and required subdirectories.
+                // Chromium WebView needs cache/ for disk cache and cookies/
+                // for cookie storage. Without these, ERR_CACHE_MISS occurs.
+                ensureDirectoryStructure(webViewDir);
             }
         } catch (Exception e) {
             Slog.w(TAG, "Could not hook WebViewDatabase: " + e.getMessage());
+        }
+    }
+    
+    private static void ensureDirectoryStructure(String webViewDir) {
+        Slog.d(TAG, "Ensuring WebView directory structure for: " + webViewDir);
+        
+        // Create main WebView directory
+        File webViewDirectory = new File(webViewDir);
+        createDirectoryWithRetry(webViewDirectory, "WebView main");
+        
+        // Create required subdirectories
+        File cacheDir = new File(webViewDir, "cache");
+        createDirectoryWithRetry(cacheDir, "WebView cache");
+        
+        File cookiesDir = new File(webViewDir, "cookies");
+        createDirectoryWithRetry(cookiesDir, "WebView cookies");
+        
+        // Create additional directories that might be needed
+        File databasesDir = new File(webViewDir, "databases");
+        createDirectoryWithRetry(databasesDir, "WebView databases");
+        
+        File localStorageDir = new File(webViewDir, "Local Storage");
+        createDirectoryWithRetry(localStorageDir, "WebView Local Storage");
+        
+        // Set proper permissions for all directories
+        setDirectoryPermissions(webViewDirectory);
+        setDirectoryPermissions(cacheDir);
+        setDirectoryPermissions(cookiesDir);
+    }
+    
+    private static void createDirectoryWithRetry(File dir, String description) {
+        int maxRetries = 3;
+        int retryCount = 0;
+        
+        while (retryCount < maxRetries) {
+            if (dir.exists()) {
+                if (dir.isDirectory()) {
+                    Slog.d(TAG, description + " directory already exists: " + dir.getAbsolutePath());
+                    return;
+                } else {
+                    // File exists but is not a directory - delete it first
+                    Slog.w(TAG, description + " path exists but is not a directory, deleting: " + dir.getAbsolutePath());
+                    dir.delete();
+                }
+            }
+            
+            // Try to create directory
+            if (dir.mkdirs()) {
+                Slog.d(TAG, "Successfully created " + description + " directory: " + dir.getAbsolutePath());
+                return;
+            } else {
+                // Check if directory was created by another process
+                if (dir.exists() && dir.isDirectory()) {
+                    Slog.d(TAG, description + " directory created by another process: " + dir.getAbsolutePath());
+                    return;
+                }
+                
+                retryCount++;
+                Slog.w(TAG, "Failed to create " + description + " directory, attempt " + retryCount + "/" + maxRetries);
+                
+                // Wait a bit before retrying
+                if (retryCount < maxRetries) {
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+        
+        // Final check - if directory still doesn't exist, try alternative method
+        if (!dir.exists() || !dir.isDirectory()) {
+            Slog.e(TAG, "Failed to create " + description + " directory after multiple attempts: " + dir.getAbsolutePath());
+            // Try setting writable on parent and try one last time
+            File parent = dir.getParentFile();
+            if (parent != null) {
+                parent.setWritable(true, false);
+                dir.mkdirs();
+            }
+        }
+    }
+    
+    private static void setDirectoryPermissions(File dir) {
+        if (dir.exists() && dir.isDirectory()) {
+            try {
+                dir.setReadable(true, false);
+                dir.setWritable(true, false);
+                dir.setExecutable(true, false);
+                Slog.d(TAG, "Set permissions for directory: " + dir.getAbsolutePath());
+            } catch (Exception e) {
+                Slog.w(TAG, "Could not set permissions for directory: " + dir.getAbsolutePath(), e);
+            }
         }
     }
     
